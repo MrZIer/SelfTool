@@ -455,7 +455,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
     transition:opacity .3s;
   }
   .fs-overlay.visible{opacity:1}
-  .fs-overlay>*{pointer-events:auto}
+  .fs-overlay.visible>*{pointer-events:auto}
   .fs-top{
     display:flex;align-items:center;justify-content:space-between;
     padding:12px 20px;background:linear-gradient(180deg,rgba(0,0,0,.7),transparent);
