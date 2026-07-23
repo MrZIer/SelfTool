@@ -722,171 +722,102 @@ HTML_PAGE = r"""<!DOCTYPE html>
       }
     }
     dirList.innerHTML=h;
-    dirList.querySelectorAll('.dir-item').forEach(el=>{
-      el.addEventListener('click',()=>{
-        if(el.classList.contains('folder')||el.classList.contains('parent')){
-          browseDir(el.dataset.path);
-        }else{
-          loadServerVideo(el.dataset.path);
-        }
-      });
-    });
+    bindSidebarClicks();
   }
 
-  // ── 打开文件夹弹出窗口 ──
-  const folderModal=document.getElementById('folderModal');
-  const modalClose=document.getElementById('modalClose');
-  const modalDirList=document.getElementById('modalDirList');
-  const modalPathInput=document.getElementById('modalPathInput');
-  const modalCurrentPath=document.getElementById('modalCurrentPath');
-
-  let modalCurrentDir='';
-  let modalDirHandle=null;  // FileSystemDirectoryHandle
-  const modalHandleMap=new Map(); // path -> handle
+  // ── 原生文件夹选择 → 填充侧栏 ──
+  let fsDirHandle=null;
+  const fsHandleMap=new Map(); // virtual-path -> FileSystemDirectoryHandle
 
   async function openFolderPrompt(){
     try{
-      // 尝试使用原生文件选择器 (Chrome/Edge)
       const handle=await window.showDirectoryPicker();
-      modalDirHandle=handle;
-      modalHandleMap.clear();
-      modalHandleMap.set(handle.name,handle);
-      modalCurrentDir=handle.name;
-      modalPathInput.value=handle.name;
-      folderModal.style.display='flex';
-      await browseHandleDir(handle,handle.name);
+      fsDirHandle=handle;
+      fsHandleMap.clear();
+      fsHandleMap.set(handle.name,handle);
+      currentDir=handle.name;
+      pathInput.value=handle.name;
+      await browseHandleSidebar(handle,handle.name);
     }catch(err){
-      if(err.name==='AbortError')return; // 用户取消
-      // 回退：提示输入路径
-      if(err.name==='TypeError'||err.message?.includes('showDirectoryPicker')){
-        modalCurrentDir=currentDir||'C:\\';
-        modalPathInput.value=fmtPath(modalCurrentDir);
-        folderModal.style.display='flex';
-        browseModalDir(modalCurrentDir);
-        setTimeout(()=>modalPathInput.focus(),100);
-      }else{
-        alert('浏览器不支持原生文件夹选择，请用 Chrome/Edge，或在下方输入路径');
-        modalCurrentDir=currentDir||'C:\\';
-        modalPathInput.value=fmtPath(modalCurrentDir);
-        folderModal.style.display='flex';
-        browseModalDir(modalCurrentDir);
-        setTimeout(()=>modalPathInput.focus(),100);
-      }
+      if(err.name==='AbortError')return;
+      // 回退：聚焦路径输入框让用户手动输入
+      pathInput.focus();
+      pathInput.placeholder='浏览器不支持，请在此输入路径后回车（如 G:\\Anime）';
     }
   }
 
-  async function browseHandleDir(handle,displayPath){
+  async function browseHandleSidebar(handle,displayPath){
     const dirs=[],files=[];
-    const pending=[]; // 子目录递归任务
+    const pending=[];
     try{
       for await(const[name,entry]of handle.entries()){
         if(entry.kind==='directory'){
           dirs.push(name);
-          modalHandleMap.set(displayPath+'/'+name,entry);
-          // 递归收集子目录中的视频
-          pending.push(collectVideos(entry,displayPath+'/'+name,files));
+          fsHandleMap.set(displayPath+'/'+name,entry);
+          pending.push(collectSidebarVideos(entry,displayPath+'/'+name,files));
         }else{
           const ext='.'+name.split('.').pop().toLowerCase();
           if(['.mp4','.mkv','.avi','.mov','.wmv','.flv','.webm','.m4v','.mpg','.mpeg','.ogv','.ts'].includes(ext)){
-            files.push({name,entry});
+            files.push({name,entry,relPath:displayPath+'/'+name});
           }
         }
       }
-      // 等待子目录递归完成
       await Promise.all(pending);
     }catch(e){}
 
     dirs.sort((a,b)=>a.toLowerCase().localeCompare(b.toLowerCase()));
     files.sort((a,b)=>a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
 
-    const parentPath=displayPath.includes('/')?displayPath.substring(0,displayPath.lastIndexOf('/')):null;
-    modalCurrentDir=displayPath;
-    modalCurrentPath.textContent=displayPath+' ('+files.length+'个视频)';
-    modalPathInput.value=displayPath;
+    currentDir=displayPath;
+    pathInput.value=displayPath;
 
     let h='';
-    if(parentPath!==null){
-      h+=`<div class="dir-item parent" data-path="${parentPath}">
+    // 返回上级（如果不在根）
+    if(displayPath!==fsDirHandle.name){
+      const pp=displayPath.substring(0,displayPath.lastIndexOf('/'));
+      h+=`<div class="dir-item parent" data-path="${pp}" data-handle="1">
         <span class=ico>📂</span><span class=name>.. (上级目录)</span></div>`;
     }
     for(const d of dirs){
       const full=displayPath+'/'+d;
-      h+=`<div class="dir-item folder" data-path="${full}">
+      h+=`<div class="dir-item folder" data-path="${full}" data-handle="1">
         <span class=ico>📁</span><span class=name>${d}</span></div>`;
     }
-    if(files.length===0&&dirs.length===0&&parentPath===null){
+    if(files.length===0&&dirs.length===0&&displayPath===fsDirHandle.name){
       h+='<div class="empty-msg">此目录及子目录中没有视频文件</div>';
     }
     for(const f of files){
-      const full=f.relPath||(displayPath+'/'+f.name);
       const prefix=f.subDir?`[${f.subDir}] `:'';
-      h+=`<div class="dir-item file" data-path="${full}">
+      h+=`<div class="dir-item file" data-path="${f.relPath}" data-handle="1">
         <span class=ico>🎬</span><span class=name>${prefix}${f.name}</span></div>`;
     }
-    modalDirList.innerHTML=h;
-
-    modalDirList.querySelectorAll('.dir-item').forEach(el=>{
-      el.addEventListener('click',async()=>{
-        if(el.classList.contains('folder')){
-          const hh=modalHandleMap.get(el.dataset.path);
-          if(hh)await browseHandleDir(hh,el.dataset.path);
-        }else if(el.classList.contains('parent')){
-          const pp=el.dataset.path;
-          if(pp===''){
-            await browseHandleDir(modalDirHandle,modalDirHandle.name);
-          }else{
-            const ph=modalHandleMap.get(pp);
-            if(ph)await browseHandleDir(ph,pp);
-          }
-        }else{
-          await playHandleFile(el.dataset.path);
-        }
-      });
-      el.addEventListener('dblclick',async()=>{
-        if(el.classList.contains('folder')){
-          const hh=modalHandleMap.get(el.dataset.path);
-          if(hh)await browseHandleDir(hh,el.dataset.path);
-        }else if(el.classList.contains('parent')){
-          const pp=el.dataset.path;
-          if(pp===''){
-            await browseHandleDir(modalDirHandle,modalDirHandle.name);
-          }else{
-            const ph=modalHandleMap.get(pp);
-            if(ph)await browseHandleDir(ph,pp);
-          }
-        }
-      });
-    });
+    dirList.innerHTML=h;
+    bindSidebarClicks();
   }
 
-  // 递归收集子目录中的视频文件（限制深度2层）
-  async function collectVideos(handle,relPath,allFiles,depth=0){
-    if(depth>1)return; // 最多深入2层
+  async function collectSidebarVideos(handle,relPath,allFiles,depth=0){
+    if(depth>1)return;
     try{
       for await(const[name,entry]of handle.entries()){
         if(entry.kind==='directory'&&depth<1){
-          modalHandleMap.set(relPath+'/'+name,entry);
-          await collectVideos(entry,relPath+'/'+name,allFiles,depth+1);
+          fsHandleMap.set(relPath+'/'+name,entry);
+          await collectSidebarVideos(entry,relPath+'/'+name,allFiles,depth+1);
         }else if(entry.kind==='file'){
           const ext='.'+name.split('.').pop().toLowerCase();
           if(['.mp4','.mkv','.avi','.mov','.wmv','.flv','.webm','.m4v','.mpg','.mpeg','.ogv','.ts'].includes(ext)){
-            const subDir=relPath.split('/').slice(1).join('/'); // 相对于根的子目录路径
-            allFiles.push({
-              name,entry,subDir:subDir||null,
-              relPath:relPath+'/'+name
-            });
+            const subDir=relPath.split('/').slice(1).join('/');
+            allFiles.push({name,entry,subDir:subDir||null,relPath:relPath+'/'+name});
           }
         }
       }
     }catch(e){}
   }
 
-  // 播放 handle 文件
   async function playHandleFile(fullPath){
     const parts=fullPath.split('/');
     const fileName=parts.pop();
     const dirPath=parts.join('/');
-    let dh=dirPath?modalHandleMap.get(dirPath):modalDirHandle;
+    let dh=dirPath?fsHandleMap.get(dirPath):fsDirHandle;
     if(dh){
       try{
         const fh=await dh.getFileHandle(fileName);
@@ -896,98 +827,38 @@ HTML_PAGE = r"""<!DOCTYPE html>
         curFile.textContent=fileName;
         startHint.style.display='none';
         video.style.display='block';
-        closeFolderModal();
       }catch(e){
         alert('无法读取文件: '+e.message);
       }
     }
   }
 
-  function closeFolderModal(){
-    folderModal.style.display='none';
-  }
-
-  function browseModalDir(dirPath){
-    const params=dirPath?'?path='+encodeURIComponent(dirPath):'';
-    fetch('/browse'+params)
-    .then(r=>r.json())
-    .then(d=>{
-      modalCurrentDir=d.current;
-      modalCurrentPath.textContent=fmtPath(d.current);
-      renderModalDirList(d);
-      modalPathInput.value=fmtPath(d.current);
-    })
-    .catch(()=>{modalDirList.innerHTML='<div class=\"empty-msg\">无法访问该路径</div>'});
-  }
-
-  function renderModalDirList(d){
-    let h='';
-    if(d.parent){
-      h+=`<div class="dir-item parent" data-path="${d.parent}">
-        <span class=ico>📂</span><span class=name>.. (上级目录)</span></div>`;
-    }
-    for(const f of d.folders){
-      const full=fmtPath(d.current)+'/'+f;
-      h+=`<div class="dir-item folder" data-path="${full}">
-        <span class=ico>📁</span><span class=name>${f}</span></div>`;
-    }
-    if(d.files.length===0&&d.folders.length===0&&!d.parent){
-      h+='<div class="empty-msg">此目录没有视频文件</div>';
-    }
-    for(const f of d.files){
-      const full=fmtPath(d.current)+'/'+f.name;
-      h+=`<div class="dir-item file" data-path="${full}">
-        <span class=ico>🎬</span><span class=name>${f.name}</span><span class=size>${f.size}</span></div>`;
-    }
-    modalDirList.innerHTML=h;
-    modalDirList.querySelectorAll('.dir-item').forEach(el=>{
-      el.addEventListener('click',()=>{
-        if(el.classList.contains('folder')||el.classList.contains('parent')){
-          browseModalDir(el.dataset.path);
+  // ── 统一侧栏点击处理 ──
+  function bindSidebarClicks(){
+    dirList.querySelectorAll('.dir-item').forEach(el=>{
+      el.addEventListener('click',async()=>{
+        if(el.dataset.handle==='1'){
+          // Handle-based 导航
+          if(el.classList.contains('folder')){
+            const hh=fsHandleMap.get(el.dataset.path);
+            if(hh)await browseHandleSidebar(hh,el.dataset.path);
+          }else if(el.classList.contains('parent')){
+            const hh=fsHandleMap.get(el.dataset.path);
+            if(hh)await browseHandleSidebar(hh,el.dataset.path);
+          }else{
+            await playHandleFile(el.dataset.path);
+          }
         }else{
-          loadServerVideo(el.dataset.path);
-          closeFolderModal();
-          // 同步侧栏
-          browseDir(el.dataset.path.substring(0,el.dataset.path.lastIndexOf('/')));
-        }
-      });
-      el.addEventListener('dblclick',()=>{
-        if(el.classList.contains('folder')||el.classList.contains('parent')){
-          browseModalDir(el.dataset.path);
+          // 服务端路径导航
+          if(el.classList.contains('folder')||el.classList.contains('parent')){
+            browseDir(el.dataset.path);
+          }else{
+            loadServerVideo(el.dataset.path);
+          }
         }
       });
     });
   }
-
-  function goModalPath(){
-    const v=modalPathInput.value.trim();
-    if(!v)return;
-    // 如果输入的路径匹配当前 handle 导航中的某个目录
-    if(modalHandleMap.has(v)){
-      browseHandleDir(modalHandleMap.get(v),v);
-    }else{
-      // 回退到服务端浏览
-      modalDirHandle=null;
-      browseModalDir(v);
-    }
-  }
-  modalPathInput.addEventListener('keydown',e=>{if(e.key==='Enter')goModalPath()});
-
-  // 点击遮罩关闭
-  modalClose.addEventListener('click',closeFolderModal);
-  folderModal.addEventListener('click',e=>{
-    if(e.target===folderModal)closeFolderModal();
-  });
-  // Esc 关闭
-  document.addEventListener('keydown',e=>{
-    if(e.key==='Escape'){
-      if(folderModal.style.display==='flex'){
-        e.preventDefault();e.stopPropagation();closeFolderModal();
-      }else if(document.fullscreenElement){
-        e.preventDefault();document.exitFullscreen();
-      }
-    }
-  });
 
   // ── 显示磁盘列表 ──
   function showDrives(){
@@ -1000,9 +871,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
           <span class=ico>💿</span><span class=name>${d}</span></div>`;
       }
       dirList.innerHTML=h;
-      dirList.querySelectorAll('.dir-item').forEach(el=>{
-        el.addEventListener('click',()=>browseDir(el.dataset.path));
-      });
+      bindSidebarClicks();
     });
   }
 
