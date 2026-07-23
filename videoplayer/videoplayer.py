@@ -777,11 +777,14 @@ HTML_PAGE = r"""<!DOCTYPE html>
 
   async function browseHandleDir(handle,displayPath){
     const dirs=[],files=[];
+    const pending=[]; // 子目录递归任务
     try{
       for await(const[name,entry]of handle.entries()){
         if(entry.kind==='directory'){
           dirs.push(name);
           modalHandleMap.set(displayPath+'/'+name,entry);
+          // 递归收集子目录中的视频
+          pending.push(collectVideos(entry,displayPath+'/'+name,files));
         }else{
           const ext='.'+name.split('.').pop().toLowerCase();
           if(['.mp4','.mkv','.avi','.mov','.wmv','.flv','.webm','.m4v','.mpg','.mpeg','.ogv','.ts'].includes(ext)){
@@ -789,13 +792,16 @@ HTML_PAGE = r"""<!DOCTYPE html>
           }
         }
       }
+      // 等待子目录递归完成
+      await Promise.all(pending);
     }catch(e){}
+
     dirs.sort((a,b)=>a.toLowerCase().localeCompare(b.toLowerCase()));
     files.sort((a,b)=>a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
 
     const parentPath=displayPath.includes('/')?displayPath.substring(0,displayPath.lastIndexOf('/')):null;
     modalCurrentDir=displayPath;
-    modalCurrentPath.textContent=displayPath;
+    modalCurrentPath.textContent=displayPath+' ('+files.length+'个视频)';
     modalPathInput.value=displayPath;
 
     let h='';
@@ -809,12 +815,13 @@ HTML_PAGE = r"""<!DOCTYPE html>
         <span class=ico>📁</span><span class=name>${d}</span></div>`;
     }
     if(files.length===0&&dirs.length===0&&parentPath===null){
-      h+='<div class="empty-msg">此目录没有视频文件</div>';
+      h+='<div class="empty-msg">此目录及子目录中没有视频文件</div>';
     }
     for(const f of files){
-      const full=displayPath+'/'+f.name;
+      const full=f.relPath||(displayPath+'/'+f.name);
+      const prefix=f.subDir?`[${f.subDir}] `:'';
       h+=`<div class="dir-item file" data-path="${full}">
-        <span class=ico>🎬</span><span class=name>${f.name}</span></div>`;
+        <span class=ico>🎬</span><span class=name>${prefix}${f.name}</span></div>`;
     }
     modalDirList.innerHTML=h;
 
@@ -832,25 +839,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
             if(ph)await browseHandleDir(ph,pp);
           }
         }else{
-          // 播放视频文件
-          const parts=el.dataset.path.split('/');
-          const fileName=parts.pop();
-          const dirPath=parts.join('/');
-          let dh=dirPath?modalHandleMap.get(dirPath):modalDirHandle;
-          if(dh){
-            try{
-              const fh=await dh.getFileHandle(fileName);
-              const file=await fh.getFile();
-              video.src=URL.createObjectURL(file);
-              video.load();
-              curFile.textContent=fileName;
-              startHint.style.display='none';
-              video.style.display='block';
-              closeFolderModal();
-            }catch(e){
-              alert('无法读取文件: '+e.message);
-            }
-          }
+          await playHandleFile(el.dataset.path);
         }
       });
       el.addEventListener('dblclick',async()=>{
@@ -868,6 +857,50 @@ HTML_PAGE = r"""<!DOCTYPE html>
         }
       });
     });
+  }
+
+  // 递归收集子目录中的视频文件（限制深度2层）
+  async function collectVideos(handle,relPath,allFiles,depth=0){
+    if(depth>1)return; // 最多深入2层
+    try{
+      for await(const[name,entry]of handle.entries()){
+        if(entry.kind==='directory'&&depth<1){
+          modalHandleMap.set(relPath+'/'+name,entry);
+          await collectVideos(entry,relPath+'/'+name,allFiles,depth+1);
+        }else if(entry.kind==='file'){
+          const ext='.'+name.split('.').pop().toLowerCase();
+          if(['.mp4','.mkv','.avi','.mov','.wmv','.flv','.webm','.m4v','.mpg','.mpeg','.ogv','.ts'].includes(ext)){
+            const subDir=relPath.split('/').slice(1).join('/'); // 相对于根的子目录路径
+            allFiles.push({
+              name,entry,subDir:subDir||null,
+              relPath:relPath+'/'+name
+            });
+          }
+        }
+      }
+    }catch(e){}
+  }
+
+  // 播放 handle 文件
+  async function playHandleFile(fullPath){
+    const parts=fullPath.split('/');
+    const fileName=parts.pop();
+    const dirPath=parts.join('/');
+    let dh=dirPath?modalHandleMap.get(dirPath):modalDirHandle;
+    if(dh){
+      try{
+        const fh=await dh.getFileHandle(fileName);
+        const file=await fh.getFile();
+        video.src=URL.createObjectURL(file);
+        video.load();
+        curFile.textContent=fileName;
+        startHint.style.display='none';
+        video.style.display='block';
+        closeFolderModal();
+      }catch(e){
+        alert('无法读取文件: '+e.message);
+      }
+    }
   }
 
   function closeFolderModal(){
