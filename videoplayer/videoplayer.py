@@ -11,6 +11,11 @@ import mimetypes
 import threading
 import webbrowser
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from socketserver import ThreadingMixIn
+
+class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
+    """多线程 HTTP 服务器，支持并发请求"""
+    daemon_threads = True
 from urllib.parse import urlparse, unquote, parse_qs
 
 # ── 配置 ──────────────────────────────────────────────────
@@ -736,14 +741,133 @@ HTML_PAGE = r"""<!DOCTYPE html>
   const modalCurrentPath=document.getElementById('modalCurrentPath');
 
   let modalCurrentDir='';
+  let modalDirHandle=null;  // FileSystemDirectoryHandle
+  const modalHandleMap=new Map(); // path -> handle
 
-  function openFolderPrompt(){
-    // 打开时从当前侧栏目录开始
-    modalCurrentDir=currentDir||'C:\\';
-    modalPathInput.value=fmtPath(modalCurrentDir);
-    folderModal.style.display='flex';
-    browseModalDir(modalCurrentDir);
-    setTimeout(()=>modalPathInput.focus(),100);
+  async function openFolderPrompt(){
+    try{
+      // 尝试使用原生文件选择器 (Chrome/Edge)
+      const handle=await window.showDirectoryPicker();
+      modalDirHandle=handle;
+      modalHandleMap.clear();
+      modalHandleMap.set(handle.name,handle);
+      modalCurrentDir=handle.name;
+      modalPathInput.value=handle.name;
+      folderModal.style.display='flex';
+      await browseHandleDir(handle,handle.name);
+    }catch(err){
+      if(err.name==='AbortError')return; // 用户取消
+      // 回退：提示输入路径
+      if(err.name==='TypeError'||err.message?.includes('showDirectoryPicker')){
+        modalCurrentDir=currentDir||'C:\\';
+        modalPathInput.value=fmtPath(modalCurrentDir);
+        folderModal.style.display='flex';
+        browseModalDir(modalCurrentDir);
+        setTimeout(()=>modalPathInput.focus(),100);
+      }else{
+        alert('浏览器不支持原生文件夹选择，请用 Chrome/Edge，或在下方输入路径');
+        modalCurrentDir=currentDir||'C:\\';
+        modalPathInput.value=fmtPath(modalCurrentDir);
+        folderModal.style.display='flex';
+        browseModalDir(modalCurrentDir);
+        setTimeout(()=>modalPathInput.focus(),100);
+      }
+    }
+  }
+
+  async function browseHandleDir(handle,displayPath){
+    const dirs=[],files=[];
+    try{
+      for await(const[name,entry]of handle.entries()){
+        if(entry.kind==='directory'){
+          dirs.push(name);
+          modalHandleMap.set(displayPath+'/'+name,entry);
+        }else{
+          const ext='.'+name.split('.').pop().toLowerCase();
+          if(['.mp4','.mkv','.avi','.mov','.wmv','.flv','.webm','.m4v','.mpg','.mpeg','.ogv','.ts'].includes(ext)){
+            files.push({name,entry});
+          }
+        }
+      }
+    }catch(e){}
+    dirs.sort((a,b)=>a.toLowerCase().localeCompare(b.toLowerCase()));
+    files.sort((a,b)=>a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
+
+    const parentPath=displayPath.includes('/')?displayPath.substring(0,displayPath.lastIndexOf('/')):null;
+    modalCurrentDir=displayPath;
+    modalCurrentPath.textContent=displayPath;
+    modalPathInput.value=displayPath;
+
+    let h='';
+    if(parentPath!==null){
+      h+=`<div class="dir-item parent" data-path="${parentPath}">
+        <span class=ico>📂</span><span class=name>.. (上级目录)</span></div>`;
+    }
+    for(const d of dirs){
+      const full=displayPath+'/'+d;
+      h+=`<div class="dir-item folder" data-path="${full}">
+        <span class=ico>📁</span><span class=name>${d}</span></div>`;
+    }
+    if(files.length===0&&dirs.length===0&&parentPath===null){
+      h+='<div class="empty-msg">此目录没有视频文件</div>';
+    }
+    for(const f of files){
+      const full=displayPath+'/'+f.name;
+      h+=`<div class="dir-item file" data-path="${full}">
+        <span class=ico>🎬</span><span class=name>${f.name}</span></div>`;
+    }
+    modalDirList.innerHTML=h;
+
+    modalDirList.querySelectorAll('.dir-item').forEach(el=>{
+      el.addEventListener('click',async()=>{
+        if(el.classList.contains('folder')){
+          const hh=modalHandleMap.get(el.dataset.path);
+          if(hh)await browseHandleDir(hh,el.dataset.path);
+        }else if(el.classList.contains('parent')){
+          const pp=el.dataset.path;
+          if(pp===''){
+            await browseHandleDir(modalDirHandle,modalDirHandle.name);
+          }else{
+            const ph=modalHandleMap.get(pp);
+            if(ph)await browseHandleDir(ph,pp);
+          }
+        }else{
+          // 播放视频文件
+          const parts=el.dataset.path.split('/');
+          const fileName=parts.pop();
+          const dirPath=parts.join('/');
+          let dh=dirPath?modalHandleMap.get(dirPath):modalDirHandle;
+          if(dh){
+            try{
+              const fh=await dh.getFileHandle(fileName);
+              const file=await fh.getFile();
+              video.src=URL.createObjectURL(file);
+              video.load();
+              curFile.textContent=fileName;
+              startHint.style.display='none';
+              video.style.display='block';
+              closeFolderModal();
+            }catch(e){
+              alert('无法读取文件: '+e.message);
+            }
+          }
+        }
+      });
+      el.addEventListener('dblclick',async()=>{
+        if(el.classList.contains('folder')){
+          const hh=modalHandleMap.get(el.dataset.path);
+          if(hh)await browseHandleDir(hh,el.dataset.path);
+        }else if(el.classList.contains('parent')){
+          const pp=el.dataset.path;
+          if(pp===''){
+            await browseHandleDir(modalDirHandle,modalDirHandle.name);
+          }else{
+            const ph=modalHandleMap.get(pp);
+            if(ph)await browseHandleDir(ph,pp);
+          }
+        }
+      });
+    });
   }
 
   function closeFolderModal(){
@@ -804,7 +928,15 @@ HTML_PAGE = r"""<!DOCTYPE html>
 
   function goModalPath(){
     const v=modalPathInput.value.trim();
-    if(v)browseModalDir(v);
+    if(!v)return;
+    // 如果输入的路径匹配当前 handle 导航中的某个目录
+    if(modalHandleMap.has(v)){
+      browseHandleDir(modalHandleMap.get(v),v);
+    }else{
+      // 回退到服务端浏览
+      modalDirHandle=null;
+      browseModalDir(v);
+    }
   }
   modalPathInput.addEventListener('keydown',e=>{if(e.key==='Enter')goModalPath()});
 
@@ -974,13 +1106,22 @@ HTML_PAGE = r"""<!DOCTYPE html>
       fsOverlay.classList.add('visible');
       fsVolSlider.value=volSlider.value;
       resetFsTimer();
+      // 用 document 监听鼠标移动（fsOverlay 有 pointer-events:none 时子元素事件不冒泡）
+      document.addEventListener('mousemove',onFsMouseMove);
+      document.addEventListener('mousedown',onFsMouseMove);
     }else{
       fullLabel.textContent='全屏';
       btnFull.classList.remove('active');
       sidebar.classList.remove('hidden');
       fsOverlay.classList.remove('visible');
       clearTimeout(fsHideTimer);
+      document.removeEventListener('mousemove',onFsMouseMove);
+      document.removeEventListener('mousedown',onFsMouseMove);
     }
+  }
+
+  function onFsMouseMove(){
+    resetFsTimer();
   }
 
   function resetFsTimer(){
@@ -990,10 +1131,6 @@ HTML_PAGE = r"""<!DOCTYPE html>
       fsOverlay.classList.remove('visible');
     },3500);
   }
-
-  // 全屏覆层鼠标移动显示
-  fsOverlay.addEventListener('mousemove',resetFsTimer);
-  fsOverlay.addEventListener('click',resetFsTimer);
 
   // 全屏覆层按钮事件
   fsExit.addEventListener('click',()=>document.exitFullscreen());
@@ -1147,7 +1284,7 @@ def main():
             sys.exit(1)
         print(f"📁 视频: {VIDEO_PATH}")
 
-    server = HTTPServer((HOST, PORT), PlayerHandler)
+    server = ThreadingHTTPServer((HOST, PORT), PlayerHandler)
     print(f"🌐 http://{HOST}:{PORT}")
     print("⌨️ Space=播放  F=全屏  W=宽屏  ←→=快进/退  ↑↓=音量  Esc=退出全屏")
     print("—" * 45)
