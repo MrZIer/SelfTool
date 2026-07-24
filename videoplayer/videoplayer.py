@@ -235,15 +235,24 @@ HTML_PAGE = r"""<!DOCTYPE html>
     font-family:'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;
     height:100vh;overflow:hidden;user-select:none;
   }
-  .layout{display:flex;height:100vh}
+  .layout{display:flex;height:100vh;overflow:hidden}
 
   /* 左侧栏 */
   .sidebar{
-    width:280px;min-width:220px;background:#111827;
-    border-right:1px solid #1e293b;display:flex;flex-direction:column;
-    flex-shrink:0;transition:width .3s,min-width .3s;overflow:hidden;
+    width:300px;min-width:140px;max-width:500px;background:#111827;
+    border-right:none;display:flex;flex-direction:column;
+    flex-shrink:0;overflow:hidden;
   }
-  .sidebar.hidden{width:0!important;min-width:0!important;border-right:none}
+  .sidebar.hidden{width:0!important;min-width:0!important;padding:0;overflow:hidden;border-right:none}
+  .sidebar.hidden+.splitter{width:0!important;pointer-events:none}
+
+  /* 拖拽分割线 */
+  .splitter{
+    width:6px;cursor:col-resize;background:#1e293b;
+    flex-shrink:0;position:relative;z-index:10;
+    transition:background .15s;
+  }
+  .splitter:hover,.splitter.active{background:#3b82f6}
 
   .sidebar-title{
     display:flex;align-items:center;gap:8px;
@@ -543,6 +552,9 @@ HTML_PAGE = r"""<!DOCTYPE html>
       <div class="empty-msg">点击上方按钮选择文件夹</div>
     </div>
   </div>
+
+  <!-- ========== 拖拽分割线 ========== -->
+  <div class="splitter" id="splitter"></div>
 
   <!-- ========== 主区域 ========== -->
   <div class="main" id="mainArea">
@@ -878,6 +890,29 @@ HTML_PAGE = r"""<!DOCTYPE html>
   // ── 侧栏开关 ──
   toggleSidebar.addEventListener('click',()=>{
     sidebar.classList.toggle('hidden');
+  });
+
+  // ── 分割线拖拽调整侧栏宽度 ──
+  const splitter=document.getElementById('splitter');
+  let isDraggingSplitter=false;
+  splitter.addEventListener('mousedown',e=>{
+    isDraggingSplitter=true;
+    splitter.classList.add('active');
+    document.body.style.cursor='col-resize';
+    document.body.style.userSelect='none';
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove',e=>{
+    if(!isDraggingSplitter)return;
+    const w=e.clientX;
+    if(w>=140&&w<=500)sidebar.style.width=w+'px';
+  });
+  document.addEventListener('mouseup',()=>{
+    if(!isDraggingSplitter)return;
+    isDraggingSplitter=false;
+    splitter.classList.remove('active');
+    document.body.style.cursor='';
+    document.body.style.userSelect='';
   });
 
   // ── 路径跳转 ──
