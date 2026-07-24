@@ -1027,8 +1027,16 @@ HTML_PAGE = r"""<!DOCTYPE html>
 
   function toggleFullscreen(){
     if(!document.fullscreenElement){
+      document.querySelector('.topbar').style.display='none';
+      document.getElementById('progressWrap').style.display='none';
+      document.getElementById('ctrlBar').style.display='none';
       sidebar.classList.add('hidden');
-      document.documentElement.requestFullscreen().catch(()=>{});
+      document.documentElement.requestFullscreen().catch(()=>{
+        document.querySelector('.topbar').style.display='';
+        document.getElementById('progressWrap').style.display='';
+        document.getElementById('ctrlBar').style.display='';
+        sidebar.classList.remove('hidden');
+      });
     }else{
       document.exitFullscreen().catch(()=>{});
     }
@@ -1038,17 +1046,22 @@ HTML_PAGE = r"""<!DOCTYPE html>
     if(document.fullscreenElement){
       fullLabel.textContent='退出全屏';
       btnFull.classList.add('active');
+      document.querySelector('.topbar').style.display='none';
+      document.getElementById('progressWrap').style.display='none';
+      document.getElementById('ctrlBar').style.display='none';
       sidebar.classList.add('hidden');
       fsTitle.textContent=curFile.textContent;
       fsOverlay.classList.add('visible');
       fsVolSlider.value=volSlider.value;
       resetFsTimer();
-      // 用 document 监听鼠标移动（fsOverlay 有 pointer-events:none 时子元素事件不冒泡）
       document.addEventListener('mousemove',onFsMouseMove);
       document.addEventListener('mousedown',onFsMouseMove);
     }else{
       fullLabel.textContent='全屏';
       btnFull.classList.remove('active');
+      document.querySelector('.topbar').style.display='';
+      document.getElementById('progressWrap').style.display='';
+      document.getElementById('ctrlBar').style.display='';
       sidebar.classList.remove('hidden');
       fsOverlay.classList.remove('visible');
       clearTimeout(fsHideTimer);
