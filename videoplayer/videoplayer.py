@@ -357,12 +357,12 @@ HTML_PAGE = r"""<!DOCTYPE html>
     background:#000;position:relative;overflow:hidden;
   }
   .video-container.widescreen video{
-    aspect-ratio:16/9;width:100%;height:auto;max-height:100%;object-fit:contain;
+    width:100%;height:100%;object-fit:cover;
   }
   .video-container:not(.widescreen) video{
     aspect-ratio:auto;max-width:100%;max-height:100%;object-fit:contain;
   }
-  .video-container video{display:none}
+  .video-container video{display:none;width:100%;height:100%}
   .drop-hint{
     position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
     background:rgba(0,0,0,.85);color:#3b82f6;font-size:20px;font-weight:600;
