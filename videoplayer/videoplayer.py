@@ -357,7 +357,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
     background:#000;position:relative;overflow:hidden;
   }
   .video-container.widescreen video{
-    width:100%;height:100%;object-fit:cover;
+    width:100%;height:100%;object-fit:contain;
   }
   .video-container:not(.widescreen) video{
     aspect-ratio:auto;max-width:100%;max-height:100%;object-fit:contain;
@@ -1004,9 +1004,10 @@ HTML_PAGE = r"""<!DOCTYPE html>
 
   // ── 宽屏 ──
   function toggleWidescreen(){
-    container.classList.toggle('widescreen');
-    btnWide.classList.toggle('active');
-    fsWide.classList.toggle('active',container.classList.contains('widescreen'));
+    const wide=container.classList.toggle('widescreen');
+    btnWide.classList.toggle('active',wide);
+    fsWide.classList.toggle('active',wide);
+    sidebar.classList.toggle('hidden',wide);
   }
 
   // ══════ 全屏 Bilibili 风格覆层 ══════
